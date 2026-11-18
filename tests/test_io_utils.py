@@ -22,6 +22,16 @@ def test_detect_label_column_returns_none_for_all_numeric_features():
     assert detect_label_column(df) is None
 
 
+def test_detect_label_column_does_not_mistake_a_small_int_feature_for_a_label():
+    df = pd.DataFrame({"a": [1.1, 2.2, 3.3, 4.4], "count": [0, 1, 2, 4]})
+    assert detect_label_column(df) is None
+
+
+def test_detect_label_column_accepts_unnamed_binary_last_column():
+    df = pd.DataFrame({"a": [1.1, 2.2, 3.3, 4.4], "flag": [0, 1, 0, 1]})
+    assert detect_label_column(df) == "flag"
+
+
 def test_encode_features_one_hot_encodes_categoricals_and_scales_numeric():
     df = pd.DataFrame(
         {
@@ -38,9 +48,42 @@ def test_encode_features_one_hot_encodes_categoricals_and_scales_numeric():
 
 
 def test_encode_features_handles_unseen_category_without_crashing():
-    train = pd.DataFrame({"service": ["http", "ftp"] * 10, "label": [0, 1] * 10})
-    X, y, names = encode_features(train, "label")
-    assert X.shape[0] == 20
+    rng = np.random.default_rng(0)
+    fit_rows = pd.DataFrame({"service": ["http", "ftp"], "label": [0, 1]})
+    fit_rows = pd.concat([fit_rows] * 30, ignore_index=True)  # 60 rows, only 2 categories in fit slice
+    extra_rows = pd.DataFrame({"service": ["telnet", "smtp"], "label": [0, 1]})
+    df = pd.concat([fit_rows, extra_rows], ignore_index=True)
+    X, y, names = encode_features(df, "label")
+    assert X.shape[0] == 62
+
+
+def test_encode_features_handles_high_cardinality_categorical_without_crashing():
+    rng = np.random.default_rng(0)
+    n = 500
+    df = pd.DataFrame(
+        {
+            "service": [f"svc_{i % 40}" for i in range(n)],
+            "num_col": rng.normal(size=n),
+            "label": rng.integers(0, 2, size=n),
+        }
+    )
+    X, y, names = encode_features(df, "label")
+    assert X.shape[0] == n
+    assert isinstance(X, np.ndarray)
+
+
+def test_encode_features_drops_trivial_row_index_column():
+    n = 100
+    df = pd.DataFrame(
+        {
+            "t": list(range(n)),
+            "x0": np.random.default_rng(0).normal(size=n),
+            "label": [0, 1] * (n // 2),
+        }
+    )
+    X, y, names = encode_features(df, "label")
+    assert "t" not in names
+    assert X.shape[1] == 1
 
 
 def test_load_drift_ground_truth_matches_known_dataset():

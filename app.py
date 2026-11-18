@@ -8,7 +8,6 @@ import streamlit as st
 
 from detectores import DETECTOR_FACTORIES, run_detection
 from io_utils import (
-    count_rows,
     detect_label_column,
     encode_features,
     list_builtin_datasets,
@@ -20,9 +19,15 @@ PRIORIDADES = ["Menor retardo", "Menos falsas alarmas", "Mayor Accuracy", "Menor
 MAX_MUESTRAS_DEFAULT = 5000
 
 
-def recomendar(df_resultados: pd.DataFrame, prioridad: str) -> str:
+def recomendar(df_resultados: pd.DataFrame, prioridad: str, tiene_labels: bool = True) -> str:
     if df_resultados.empty:
         return "No hay resultados para recomendar."
+
+    if prioridad == "Mayor Accuracy" and not tiene_labels:
+        return (
+            "Sin etiquetas inmediatas no se puede calcular Accuracy (todos los detectores "
+            "muestran 0%). Elige otra prioridad, por ejemplo 'Menor retardo' o 'Menos falsas alarmas'."
+        )
 
     if prioridad == "Menor retardo":
         candidatos = df_resultados.dropna(subset=["Retardo_promedio"])
@@ -97,17 +102,34 @@ def main():
     opcion = st.sidebar.selectbox("Dataset", ["(subir CSV)"] + sorted(builtin.keys()))
     archivo_subido = st.sidebar.file_uploader("O sube tu propio CSV", type="csv")
 
+    dataset_path: Path | None = None
+    if archivo_subido is not None:
+        df = pd.read_csv(archivo_subido)
+        dataset_name = archivo_subido.name
+        ground_truth = None
+    elif opcion != "(subir CSV)":
+        dataset_path = builtin[opcion]
+        df = load_dataset(dataset_path)
+        dataset_name = opcion
+        ground_truth = load_drift_ground_truth(dataset_path)
+    else:
+        st.info("Selecciona un dataset o sube un CSV, luego configura las restricciones en la barra lateral.")
+        return
+
     tiene_labels = st.sidebar.checkbox("¿El flujo tiene etiquetas inmediatas?", value=True)
     prioridad = st.sidebar.radio("Prioridad", PRIORIDADES)
 
-    if archivo_subido is not None:
-        total_filas = sum(1 for _ in archivo_subido) - 1
-        archivo_subido.seek(0)
-    elif opcion != "(subir CSV)":
-        total_filas = count_rows(builtin[opcion])
-    else:
-        total_filas = MAX_MUESTRAS_DEFAULT
+    # Se detecta (y, si hace falta, se pide) la columna de etiqueta AQUI, antes
+    # del boton Ejecutar: un selectbox dibujado solo despues de hacer clic nunca
+    # llega a usarse, porque ese mismo clic ya dispara la ejecucion sin esperar
+    # a que el usuario lo cambie.
+    label_col = detect_label_column(df)
+    if tiene_labels and label_col is None:
+        label_col = st.sidebar.selectbox(
+            "No se detectó la columna de etiqueta automáticamente. Selecciónala:", df.columns
+        )
 
+    total_filas = len(df)
     slider_max = max(total_filas, 500)
     slider_default = total_filas if total_filas <= 15000 else MAX_MUESTRAS_DEFAULT
     max_muestras = st.sidebar.slider(
@@ -124,36 +146,26 @@ def main():
         st.info("Configura el dataset y las restricciones en la barra lateral, luego presiona Ejecutar.")
         return
 
-    dataset_path: Path | None = None
-    if archivo_subido is not None:
-        df = pd.read_csv(archivo_subido)
-        dataset_name = archivo_subido.name
-        ground_truth = None
-    elif opcion != "(subir CSV)":
-        dataset_path = builtin[opcion]
-        df = load_dataset(dataset_path)
-        dataset_name = opcion
-        ground_truth = load_drift_ground_truth(dataset_path)
-    else:
-        st.warning("Selecciona un dataset o sube un CSV.")
-        return
-
     if len(df) > max_muestras:
         df = df.iloc[:max_muestras].reset_index(drop=True)
 
-    label_col = detect_label_column(df)
-    if tiene_labels and label_col is None:
-        label_col = st.selectbox("No se detectó la columna de etiqueta automáticamente. Selecciónala:", df.columns)
-    if not tiene_labels:
-        label_col = None
-
-    X, y, _ = encode_features(df, label_col if tiene_labels else None)
+    # label_col se excluye siempre de las features (haya o no etiquetas en uso):
+    # de lo contrario, en modo sin etiquetas la columna de respuesta real se
+    # filtraria como feature hacia el autoencoder.
+    X, y, _ = encode_features(df, label_col)
+    y_para_deteccion = y if tiene_labels else None
 
     resultados = []
     with st.spinner("Ejecutando detectores..."):
-        for nombre in DETECTOR_FACTORIES:
-            resultado = run_detection(X, y, nombre, tiene_labels=tiene_labels, ground_truth=ground_truth)
-            resultados.append(resultado)
+        try:
+            for nombre in DETECTOR_FACTORIES:
+                resultado = run_detection(
+                    X, y_para_deteccion, nombre, tiene_labels=tiene_labels, ground_truth=ground_truth
+                )
+                resultados.append(resultado)
+        except ValueError as e:
+            st.error(str(e))
+            return
 
     tabla = _construir_tabla_resultados(dataset_name, resultados)
     st.subheader("Tabla comparativa")
@@ -163,7 +175,7 @@ def main():
     _graficar_stream(df, label_col, resultados, ground_truth)
 
     st.subheader("Recomendación automática")
-    st.success(recomendar(tabla, prioridad))
+    st.success(recomendar(tabla, prioridad, tiene_labels))
 
 
 if __name__ == "__main__":

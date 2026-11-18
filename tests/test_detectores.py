@@ -1,10 +1,12 @@
 import numpy as np
+import pytest
 
 from detectores import (
     DETECTOR_FACTORIES,
     AutoencoderDetector,
     MLPAdaptativo,
     calcular_retardo,
+    es_anomalia_binaria,
     requires_binary_error_signal,
     run_detection,
 )
@@ -115,11 +117,33 @@ def test_run_detection_with_labels_returns_populated_result():
 def test_run_detection_without_labels_still_detects_drift():
     X, _ = make_labeled_stream()
     result = run_detection(X, None, "DDM", tiene_labels=False, ground_truth=[300])
-    assert len(result.drifts_idx) >= 0
+    assert len(result.drifts_idx) > 0
     assert result.accuracy == 0.0
+
+
+def test_es_anomalia_binaria_flags_error_far_above_frozen_baseline():
+    assert es_anomalia_binaria(error=100.0, baseline_mean=1.0, baseline_std=0.1) is True
+
+
+def test_es_anomalia_binaria_false_for_value_within_baseline():
+    assert es_anomalia_binaria(error=1.0, baseline_mean=1.0, baseline_std=0.1) is False
+
+
+def test_es_anomalia_binaria_keeps_flagging_a_sustained_shift_instead_of_adapting_to_it():
+    # A diferencia de una ventana deslizante, la linea base fija no se "acostumbra"
+    # a un cambio sostenido: debe seguir marcando anomalia muchas muestras despues.
+    assert es_anomalia_binaria(error=10.0, baseline_mean=1.0, baseline_std=0.1) is True
 
 
 def test_run_detection_sets_retardo_none_without_ground_truth():
     X, y = make_labeled_stream()
     result = run_detection(X, y, "ADWIN", tiene_labels=True, ground_truth=None)
     assert result.retardo_promedio is None
+
+
+def test_run_detection_rejects_non_binary_labels_with_clear_error():
+    X, y = make_labeled_stream()
+    y_multiclass = y.copy()
+    y_multiclass[0] = 2
+    with pytest.raises(ValueError, match="binaria"):
+        run_detection(X, y_multiclass, "ADWIN", tiene_labels=True, ground_truth=None)

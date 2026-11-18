@@ -11,7 +11,7 @@ from sklearn.preprocessing import OneHotEncoder, StandardScaler
 BUILTIN_DATASET_DIRS = [Path("data/data"), Path("datos_sinteticos/sinteticos")]
 DRIFTS_JSON_PATH = Path("datos_sinteticos/sinteticos/drifts.json")
 LABEL_COLUMN_CANDIDATES = {"label", "target", "y", "class"}
-MAX_LABEL_UNIQUE_VALUES = 10
+MAX_LABEL_UNIQUE_VALUES = 2
 MIN_SCALER_FIT_ROWS = 50
 SCALER_FIT_FRACTION = 0.2
 
@@ -30,11 +30,6 @@ def load_dataset(path: Path) -> pd.DataFrame:
     return pd.read_csv(path)
 
 
-def count_rows(path: Path) -> int:
-    with path.open("rb") as f:
-        return sum(1 for _ in f) - 1
-
-
 def detect_label_column(df: pd.DataFrame) -> str | None:
     for column in df.columns:
         if column.strip().lower() in LABEL_COLUMN_CANDIDATES:
@@ -47,11 +42,20 @@ def detect_label_column(df: pd.DataFrame) -> str | None:
     return None
 
 
+def _is_trivial_row_index(series: pd.Series) -> bool:
+    if not pd.api.types.is_integer_dtype(series):
+        return False
+    return series.to_numpy().tolist() == list(range(len(series)))
+
+
 def encode_features(
     df: pd.DataFrame, label_col: str | None
 ) -> tuple[np.ndarray, np.ndarray | None, list[str]]:
     feature_df = df.drop(columns=[label_col]) if label_col else df
     y = df[label_col].to_numpy() if label_col else None
+
+    index_like_cols = [c for c in feature_df.columns if _is_trivial_row_index(feature_df[c])]
+    feature_df = feature_df.drop(columns=index_like_cols)
 
     categorical_cols = feature_df.select_dtypes(include=["object", "str", "category"]).columns.tolist()
     numeric_cols = [c for c in feature_df.columns if c not in categorical_cols]
@@ -63,7 +67,7 @@ def encode_features(
     transformer = ColumnTransformer(
         transformers=[
             ("num", StandardScaler(), numeric_cols),
-            ("cat", OneHotEncoder(handle_unknown="ignore"), categorical_cols),
+            ("cat", OneHotEncoder(handle_unknown="ignore", sparse_output=False), categorical_cols),
         ]
     )
     transformer.fit(fit_slice)

@@ -134,7 +134,12 @@ class AutoencoderDetector:
         return self._adwin.drift_detected
 
 
-_ROLLING_WINDOW = 50
+def es_anomalia_binaria(error: float, baseline_mean: float, baseline_std: float) -> bool:
+    """Decide si `error` es anomalo respecto a una linea base FIJA (calculada
+    una sola vez durante el warmup). Una ventana deslizante se adaptaria al
+    propio cambio sostenido y dejaria de verlo como anomalo; una linea base
+    fija no."""
+    return error > baseline_mean + 2 * baseline_std
 
 
 def run_detection(
@@ -145,23 +150,35 @@ def run_detection(
     ground_truth: list[int] | None,
     warmup_rows: int = 200,
 ) -> ResultadoDeteccion:
+    if tiene_labels and y is not None and len(np.unique(y)) > 2:
+        raise ValueError(
+            "MLPAdaptativo y los detectores binarios (DDM/EDDM/HDDM) solo soportan "
+            "clasificacion binaria; la etiqueta seleccionada tiene mas de 2 clases."
+        )
+
+    torch.manual_seed(42)  # resultados deterministas y comparables entre detectores
+
     n_samples, n_features = X.shape
     mlp = MLPAdaptativo(input_dim=n_features)
     detector = DETECTOR_FACTORIES[detector_name]()
     binary_signal = requires_binary_error_signal(detector_name)
 
     autoencoder: AutoencoderDetector | None = None
+    baseline_mean = baseline_std = 0.0
     if not tiene_labels:
+        n_warmup = min(warmup_rows, n_samples)
         autoencoder = AutoencoderDetector(input_dim=n_features)
-        autoencoder.warmup(X[: min(warmup_rows, n_samples)])
+        autoencoder.warmup(X[:n_warmup])
+        baseline_errors = [autoencoder.reconstruction_error(X[i]) for i in range(n_warmup)]
+        baseline_mean = float(np.mean(baseline_errors))
+        baseline_std = float(np.std(baseline_errors)) if len(baseline_errors) > 1 else 0.0
         # El MLP se mantiene activo con pseudo-etiquetas de sus propias
         # predicciones: no aporta accuracy (no hay etiquetas reales), pero
         # mantiene vivo el reset por drift para la arquitectura adaptativa.
-        for i in range(min(warmup_rows, n_samples)):
+        for i in range(n_warmup):
             pseudo_label = 1 if mlp.predict_proba_one(X[i]) > 0.5 else 0
             mlp.learn_one(X[i], pseudo_label)
 
-    error_window: list[float] = []
     correct_count = 0
     total_labeled = 0
     drifts_idx: list[int] = []
@@ -182,17 +199,12 @@ def run_detection(
             signal = 1.0 - correct
         else:
             signal = autoencoder.reconstruction_error(x)
-            error_window.append(signal)
-            if len(error_window) > _ROLLING_WINDOW:
-                error_window.pop(0)
 
         if binary_signal:
             if tiene_labels:
                 is_error = bool(signal)
             else:
-                mean = float(np.mean(error_window))
-                std = float(np.std(error_window)) if len(error_window) > 1 else 0.0
-                is_error = signal > mean + 2 * std
+                is_error = es_anomalia_binaria(signal, baseline_mean, baseline_std)
             detector.update(is_error)
         else:
             detector.update(float(signal))

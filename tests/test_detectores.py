@@ -1,4 +1,6 @@
-from detectores import DETECTOR_FACTORIES, calcular_retardo, requires_binary_error_signal
+import numpy as np
+
+from detectores import DETECTOR_FACTORIES, MLPAdaptativo, calcular_retardo, requires_binary_error_signal
 
 
 def test_all_seven_detectors_are_registered():
@@ -30,3 +32,30 @@ def test_calcular_retardo_averages_nearest_following_detections():
 
 def test_calcular_retardo_returns_none_without_ground_truth():
     assert calcular_retardo(drifts_idx=[100], ground_truth=None) is None
+
+
+def test_mlp_predict_proba_one_returns_value_in_unit_interval():
+    mlp = MLPAdaptativo(input_dim=4)
+    p = mlp.predict_proba_one(np.random.rand(4).astype(np.float32))
+    assert 0.0 <= p <= 1.0
+
+
+def test_mlp_learn_one_changes_predictions_over_many_updates():
+    mlp = MLPAdaptativo(input_dim=2)
+    x = np.array([1.0, 1.0], dtype=np.float32)
+    before = mlp.predict_proba_one(x)
+    for _ in range(200):
+        mlp.learn_one(x, 1)
+    after = mlp.predict_proba_one(x)
+    assert after > before
+
+
+def test_mlp_reset_reinitializes_weights():
+    mlp = MLPAdaptativo(input_dim=2)
+    x = np.array([1.0, 1.0], dtype=np.float32)
+    for _ in range(200):
+        mlp.learn_one(x, 1)
+    trained = mlp.predict_proba_one(x)
+    mlp.reset()
+    reset_val = mlp.predict_proba_one(x)
+    assert reset_val != trained

@@ -6,6 +6,7 @@ from detectores import (
     MLPAdaptativo,
     calcular_retardo,
     requires_binary_error_signal,
+    run_detection,
 )
 
 
@@ -91,3 +92,34 @@ def test_is_drift_flags_large_sustained_error_jump():
         err = ae.reconstruction_error(np.array([50.0, -50.0], dtype=np.float32))
         flagged = flagged or ae.is_drift(err)
     assert flagged
+
+
+def make_labeled_stream(n=600, drift_at=300):
+    rng = np.random.default_rng(0)
+    X = rng.normal(0, 1, size=(n, 3)).astype(np.float32)
+    X[drift_at:] += 5.0
+    y = (X[:, 0] > 0).astype(int)
+    return X, y
+
+
+def test_run_detection_with_labels_returns_populated_result():
+    X, y = make_labeled_stream()
+    result = run_detection(X, y, "ADWIN", tiene_labels=True, ground_truth=[300])
+    assert result.detector == "ADWIN"
+    assert 0.0 <= result.accuracy <= 1.0
+    assert isinstance(result.drifts_idx, list)
+    assert result.tiempo_seg >= 0.0
+    assert result.ram_pico_kb >= 0.0
+
+
+def test_run_detection_without_labels_still_detects_drift():
+    X, _ = make_labeled_stream()
+    result = run_detection(X, None, "DDM", tiene_labels=False, ground_truth=[300])
+    assert len(result.drifts_idx) >= 0
+    assert result.accuracy == 0.0
+
+
+def test_run_detection_sets_retardo_none_without_ground_truth():
+    X, y = make_labeled_stream()
+    result = run_detection(X, y, "ADWIN", tiene_labels=True, ground_truth=None)
+    assert result.retardo_promedio is None

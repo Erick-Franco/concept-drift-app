@@ -132,3 +132,88 @@ class AutoencoderDetector:
     def is_drift(self, error: float) -> bool:
         self._adwin.update(error)
         return self._adwin.drift_detected
+
+
+_ROLLING_WINDOW = 50
+
+
+def run_detection(
+    X: np.ndarray,
+    y: np.ndarray | None,
+    detector_name: str,
+    tiene_labels: bool,
+    ground_truth: list[int] | None,
+    warmup_rows: int = 200,
+) -> ResultadoDeteccion:
+    n_samples, n_features = X.shape
+    mlp = MLPAdaptativo(input_dim=n_features)
+    detector = DETECTOR_FACTORIES[detector_name]()
+    binary_signal = requires_binary_error_signal(detector_name)
+
+    autoencoder: AutoencoderDetector | None = None
+    if not tiene_labels:
+        autoencoder = AutoencoderDetector(input_dim=n_features)
+        autoencoder.warmup(X[: min(warmup_rows, n_samples)])
+        # El MLP se mantiene activo con pseudo-etiquetas de sus propias
+        # predicciones: no aporta accuracy (no hay etiquetas reales), pero
+        # mantiene vivo el reset por drift para la arquitectura adaptativa.
+        for i in range(min(warmup_rows, n_samples)):
+            pseudo_label = 1 if mlp.predict_proba_one(X[i]) > 0.5 else 0
+            mlp.learn_one(X[i], pseudo_label)
+
+    error_window: list[float] = []
+    correct_count = 0
+    total_labeled = 0
+    drifts_idx: list[int] = []
+
+    tracemalloc.start()
+    t0 = time.perf_counter()
+
+    for i in range(n_samples):
+        x = X[i]
+
+        if tiene_labels:
+            true_label = int(y[i])
+            pred_label = 1 if mlp.predict_proba_one(x) > 0.5 else 0
+            correct = int(pred_label == true_label)
+            correct_count += correct
+            total_labeled += 1
+            mlp.learn_one(x, true_label)
+            signal = 1.0 - correct
+        else:
+            signal = autoencoder.reconstruction_error(x)
+            error_window.append(signal)
+            if len(error_window) > _ROLLING_WINDOW:
+                error_window.pop(0)
+
+        if binary_signal:
+            if tiene_labels:
+                is_error = bool(signal)
+            else:
+                mean = float(np.mean(error_window))
+                std = float(np.std(error_window)) if len(error_window) > 1 else 0.0
+                is_error = signal > mean + 2 * std
+            detector.update(is_error)
+        else:
+            detector.update(float(signal))
+
+        if getattr(detector, "drift_detected", False):
+            drifts_idx.append(i)
+            mlp.reset()
+
+    tiempo_seg = time.perf_counter() - t0
+    _, peak_bytes = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+    ram_pico_kb = peak_bytes / 1024
+
+    accuracy = correct_count / total_labeled if total_labeled else 0.0
+    retardo_promedio = calcular_retardo(drifts_idx, ground_truth)
+
+    return ResultadoDeteccion(
+        detector=detector_name,
+        accuracy=accuracy,
+        drifts_idx=drifts_idx,
+        tiempo_seg=tiempo_seg,
+        ram_pico_kb=ram_pico_kb,
+        retardo_promedio=retardo_promedio,
+    )

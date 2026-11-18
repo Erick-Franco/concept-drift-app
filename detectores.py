@@ -92,3 +92,43 @@ class MLPAdaptativo:
 
     def reset(self) -> None:
         self._build()
+
+
+class AutoencoderDetector:
+    """Detector no supervisado: entrena un autoencoder sobre una ventana
+    inicial y usa el error de reconstruccion, vigilado por un ADWIN interno,
+    como senal de drift cuando no hay etiquetas disponibles."""
+
+    MAX_WARMUP_ROWS = 500
+
+    def __init__(self, input_dim: int, hidden: int = 16):
+        self.input_dim = input_dim
+        self.hidden = hidden
+        self.model = nn.Sequential(
+            nn.Linear(input_dim, hidden),
+            nn.ReLU(),
+            nn.Linear(hidden, input_dim),
+        )
+        self._adwin = RiverADWIN()
+
+    def warmup(self, X_init: np.ndarray, epochs: int = 20) -> None:
+        n_rows = min(len(X_init), self.MAX_WARMUP_ROWS)
+        tensor_x = torch.as_tensor(X_init[:n_rows], dtype=torch.float32)
+        optimizer = torch.optim.Adam(self.model.parameters(), lr=0.01)
+        loss_fn = nn.MSELoss()
+        for _ in range(epochs):
+            optimizer.zero_grad()
+            reconstruction = self.model(tensor_x)
+            loss = loss_fn(reconstruction, tensor_x)
+            loss.backward()
+            optimizer.step()
+
+    def reconstruction_error(self, x: np.ndarray) -> float:
+        with torch.no_grad():
+            tensor_x = torch.as_tensor(x, dtype=torch.float32).unsqueeze(0)
+            reconstruction = self.model(tensor_x)
+            return torch.mean((reconstruction - tensor_x) ** 2).item()
+
+    def is_drift(self, error: float) -> bool:
+        self._adwin.update(error)
+        return self._adwin.drift_detected

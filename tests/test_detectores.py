@@ -1,6 +1,12 @@
 import numpy as np
 
-from detectores import DETECTOR_FACTORIES, MLPAdaptativo, calcular_retardo, requires_binary_error_signal
+from detectores import (
+    DETECTOR_FACTORIES,
+    AutoencoderDetector,
+    MLPAdaptativo,
+    calcular_retardo,
+    requires_binary_error_signal,
+)
 
 
 def test_all_seven_detectors_are_registered():
@@ -59,3 +65,29 @@ def test_mlp_reset_reinitializes_weights():
     mlp.reset()
     reset_val = mlp.predict_proba_one(x)
     assert reset_val != trained
+
+
+def test_warmup_handles_fewer_rows_than_default_window():
+    ae = AutoencoderDetector(input_dim=3)
+    ae.warmup(np.random.rand(10, 3).astype(np.float32))
+
+
+def test_reconstruction_error_is_non_negative_float():
+    ae = AutoencoderDetector(input_dim=3)
+    ae.warmup(np.random.rand(50, 3).astype(np.float32))
+    err = ae.reconstruction_error(np.random.rand(3).astype(np.float32))
+    assert err >= 0.0
+
+
+def test_is_drift_flags_large_sustained_error_jump():
+    ae = AutoencoderDetector(input_dim=2)
+    normal = np.tile(np.array([0.5, 0.5], dtype=np.float32), (100, 1))
+    ae.warmup(normal)
+    flagged = False
+    for _ in range(50):
+        err = ae.reconstruction_error(np.array([0.5, 0.5], dtype=np.float32))
+        flagged = flagged or ae.is_drift(err)
+    for _ in range(50):
+        err = ae.reconstruction_error(np.array([50.0, -50.0], dtype=np.float32))
+        flagged = flagged or ae.is_drift(err)
+    assert flagged

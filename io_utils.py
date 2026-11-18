@@ -30,6 +30,11 @@ def load_dataset(path: Path) -> pd.DataFrame:
     return pd.read_csv(path)
 
 
+def count_rows(path: Path) -> int:
+    with path.open("rb") as f:
+        return sum(1 for _ in f) - 1
+
+
 def detect_label_column(df: pd.DataFrame) -> str | None:
     for column in df.columns:
         if column.strip().lower() in LABEL_COLUMN_CANDIDATES:

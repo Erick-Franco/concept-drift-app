@@ -1,0 +1,21 @@
+Dataset,PCA,Detector,Accuracy (%),Drifts_Total,Primeros_Drifts,Tiempo_seg,RAM_Pico_KB
+1_Sintetico_Locality,No (5 col.),ADWIN,54.5,12,"[10192, 10704, 19312]",17.84,260.37
+1_Sintetico_Locality,No (5 col.),DDM,85.45,3,"[7286, 7935, 8870]",14.91,687.61
+1_Sintetico_Locality,No (5 col.),EDDM,84.66,5,"[2065, 8666, 8723]",14.32,655.96
+1_Sintetico_Locality,No (5 col.),PageHinkley,53.97,22,"[5380, 8874, 17261]",16.18,131.77
+2_Sintetico_Hyperplane40,No (40 col.),ADWIN,81.73,15,"[2896, 11088, 12208]",56.22,3216.15
+2_Sintetico_Hyperplane40,No (40 col.),DDM,82.48,22,"[5555, 9827, 13772]",56.16,2903.3
+2_Sintetico_Hyperplane40,No (40 col.),EDDM,80.42,11,"[9845, 14601, 18954]",55.86,5231.13
+2_Sintetico_Hyperplane40,No (40 col.),PageHinkley,80.91,93,"[2591, 3614, 7526]",55.84,1194.34
+2_Sintetico_Hyperplane40,Sí (10 comp.),ADWIN,61.85,6,"[38864, 47984, 50576]",19.57,810.82
+2_Sintetico_Hyperplane40,Sí (10 comp.),DDM,61.33,2,"[51860, 75640]",19.2,1316.47
+2_Sintetico_Hyperplane40,Sí (10 comp.),EDDM,59.05,10,"[2050, 2955, 3023]",19.69,2346.72
+2_Sintetico_Hyperplane40,Sí (10 comp.),PageHinkley,62.1,32,"[7189, 10844, 13015]",18.65,304.27
+3_Real_NSL_KDD,No (40 col.),ADWIN,87.73,16,"[12240, 24784, 38096]",68.79,1637.49
+3_Real_NSL_KDD,No (40 col.),DDM,94.32,2,"[6557, 127037]",54.56,4549.13
+3_Real_NSL_KDD,No (40 col.),EDDM,94.55,15,"[2258, 5833, 6342]",53.46,7455.23
+3_Real_NSL_KDD,No (40 col.),PageHinkley,87.06,24,"[6634, 14126, 19187]",71.03,1907.04
+3_Real_NSL_KDD,Sí (10 comp.),ADWIN,91.15,24,"[6608, 15824, 20176]",26.37,652.04
+3_Real_NSL_KDD,Sí (10 comp.),DDM,95.34,1,[126968],24.76,1482.22
+3_Real_NSL_KDD,Sí (10 comp.),EDDM,95.41,4,"[2260, 144924, 145360]",24.38,1903.69
+3_Real_NSL_KDD,Sí (10 comp.),PageHinkley,89.8,34,"[4510, 5450, 10645]",25.1,723.02

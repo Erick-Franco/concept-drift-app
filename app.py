@@ -75,6 +75,22 @@ def _construir_tabla_resultados(dataset_name: str, resultados: list) -> pd.DataF
     return pd.DataFrame(filas)
 
 
+def _graficar_metricas_comparativas(df_resultados: pd.DataFrame) -> go.Figure:
+    fig = go.Figure()
+    fig.add_trace(go.Bar(x=df_resultados["Detector"], y=df_resultados["Accuracy (%)"], name="Accuracy (%)"))
+    fig.add_trace(
+        go.Bar(x=df_resultados["Detector"], y=df_resultados["Tiempo_seg"], name="Tiempo (s)", yaxis="y2")
+    )
+    fig.update_layout(
+        title="Comparación de métricas por detector",
+        barmode="group",
+        yaxis=dict(title="Accuracy (%)"),
+        yaxis2=dict(title="Tiempo (s)", overlaying="y", side="right"),
+        legend=dict(orientation="h", y=1.1),
+    )
+    return fig
+
+
 def _graficar_stream(df: pd.DataFrame, label_col: str | None, resultados: list, ground_truth: list[int] | None):
     señal = df[label_col] if label_col and pd.api.types.is_numeric_dtype(df[label_col]) else df.iloc[:, 0]
     fig = go.Figure()
@@ -170,6 +186,9 @@ def main():
     tabla = _construir_tabla_resultados(dataset_name, resultados)
     st.subheader("Tabla comparativa")
     st.dataframe(tabla, use_container_width=True)
+
+    st.subheader("Comparación de métricas")
+    st.plotly_chart(_graficar_metricas_comparativas(tabla), use_container_width=True)
 
     st.subheader("Visualización del stream")
     _graficar_stream(df, label_col, resultados, ground_truth)

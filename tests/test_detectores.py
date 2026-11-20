@@ -2,14 +2,21 @@ import numpy as np
 import pytest
 
 from detectores import (
+    DETECTOR_DESCRIPTIONS,
     DETECTOR_FACTORIES,
     AutoencoderDetector,
     MLPAdaptativo,
     calcular_retardo,
+    ejecutar_con_repeticiones,
     es_anomalia_binaria,
     requires_binary_error_signal,
     run_detection,
 )
+
+
+def test_detector_descriptions_cover_all_registered_detectors():
+    assert set(DETECTOR_DESCRIPTIONS) == set(DETECTOR_FACTORIES)
+    assert all(isinstance(v, str) and len(v) > 10 for v in DETECTOR_DESCRIPTIONS.values())
 
 
 def test_all_seven_detectors_are_registered():
@@ -151,6 +158,49 @@ def test_run_detection_sets_retardo_none_without_ground_truth():
     X, y = make_labeled_stream()
     result = run_detection(X, y, "ADWIN", tiene_labels=True, ground_truth=None)
     assert result.retardo_promedio is None
+
+
+def test_detector_factories_accept_overrides_for_tunable_params():
+    adwin = DETECTOR_FACTORIES["ADWIN"](delta=0.5)
+    assert adwin.delta == 0.5
+    page_hinkley = DETECTOR_FACTORIES["PageHinkley"](threshold=10)
+    assert page_hinkley.threshold == 10
+    kswin = DETECTOR_FACTORIES["KSWIN"](alpha=0.1)
+    assert kswin.alpha == 0.1
+
+
+def test_run_detection_passes_detector_params_through():
+    X, y = make_labeled_stream()
+    result = run_detection(
+        X, y, "PageHinkley", tiene_labels=True, ground_truth=None, detector_params={"threshold": 1}
+    )
+    assert isinstance(result.drifts_idx, list)
+
+
+def test_run_detection_seed_param_changes_mlp_initialization():
+    X, y = make_labeled_stream()
+    result_a = run_detection(X, y, "ADWIN", tiene_labels=True, ground_truth=None, seed=1)
+    result_b = run_detection(X, y, "ADWIN", tiene_labels=True, ground_truth=None, seed=2)
+    assert result_a.accuracy != result_b.accuracy
+
+
+def test_ejecutar_con_repeticiones_averages_across_seeds():
+    X, y = make_labeled_stream()
+    agregado = ejecutar_con_repeticiones(
+        X, y, "ADWIN", tiene_labels=True, ground_truth=[300], n_repeats=3
+    )
+    assert agregado.detector == "ADWIN"
+    assert 0.0 <= agregado.accuracy_mean <= 1.0
+    assert agregado.accuracy_std >= 0.0
+    assert isinstance(agregado.drifts_idx, list)
+
+
+def test_ejecutar_con_repeticiones_single_run_has_zero_std():
+    X, y = make_labeled_stream()
+    agregado = ejecutar_con_repeticiones(
+        X, y, "ADWIN", tiene_labels=True, ground_truth=None, n_repeats=1
+    )
+    assert agregado.accuracy_std == 0.0
 
 
 def test_run_detection_rejects_non_binary_labels_with_clear_error():

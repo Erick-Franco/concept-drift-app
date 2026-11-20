@@ -13,17 +13,34 @@ from river.drift import KSWIN, PageHinkley
 from river.drift import ADWIN as RiverADWIN
 from river.drift.binary import DDM, EDDM, HDDMA, HDDMW
 
-DETECTOR_FACTORIES: dict[str, Callable[[], object]] = {
-    "ADWIN": lambda: RiverADWIN(),
+DETECTOR_FACTORIES: dict[str, Callable[..., object]] = {
+    "ADWIN": lambda delta=0.002: RiverADWIN(delta=delta),
     "DDM": lambda: DDM(),
     "EDDM": lambda: EDDM(),
     "HDDM_A": lambda: HDDMA(),
     "HDDM_W": lambda: HDDMW(),
-    "PageHinkley": lambda: PageHinkley(),
-    "KSWIN": lambda: KSWIN(),
+    "PageHinkley": lambda threshold=50: PageHinkley(threshold=threshold),
+    "KSWIN": lambda alpha=0.005: KSWIN(alpha=alpha),
 }
 
 _BINARY_SIGNAL_DETECTORS = {"DDM", "EDDM", "HDDM_A", "HDDM_W"}
+
+DETECTOR_DESCRIPTIONS: dict[str, str] = {
+    "ADWIN": "Mantiene una ventana adaptativa que se achica sola cuando detecta "
+    "un cambio en la media de la señal reciente vs. la antigua.",
+    "DDM": "Vigila la tasa de error de clasificación y avisa cuando sube por "
+    "encima de un umbral estadístico basado en su desviación estándar.",
+    "EDDM": "Variante de DDM que mira la distancia entre errores consecutivos, "
+    "más sensible a drifts graduales que DDM.",
+    "HDDM_A": "Usa la desigualdad de Hoeffding sobre un promedio pesado de "
+    "errores para detectar cambios abruptos con poca varianza.",
+    "HDDM_W": "Como HDDM_A, pero con un promedio exponencialmente pesado, lo "
+    "que lo hace más sensible a drifts graduales.",
+    "PageHinkley": "Acumula la desviación de cada valor respecto a su media "
+    "móvil y avisa cuando esa suma acumulada supera un umbral.",
+    "KSWIN": "Compara dos ventanas de la señal con el test de "
+    "Kolmogorov-Smirnov para detectar cambios en su distribución.",
+}
 
 
 def requires_binary_error_signal(name: str) -> bool:
@@ -151,6 +168,8 @@ def run_detection(
     tiene_labels: bool,
     ground_truth: list[int] | None,
     warmup_rows: int = 200,
+    seed: int = 42,
+    detector_params: dict | None = None,
 ) -> ResultadoDeteccion:
     if tiene_labels and y is not None and len(np.unique(y)) > 2:
         raise ValueError(
@@ -158,11 +177,11 @@ def run_detection(
             "clasificacion binaria; la etiqueta seleccionada tiene mas de 2 clases."
         )
 
-    torch.manual_seed(42)  # resultados deterministas y comparables entre detectores
+    torch.manual_seed(seed)  # fija la inicializacion de la red para resultados reproducibles
 
     n_samples, n_features = X.shape
     mlp = MLPAdaptativo(input_dim=n_features)
-    detector = DETECTOR_FACTORIES[detector_name]()
+    detector = DETECTOR_FACTORIES[detector_name](**(detector_params or {}))
     binary_signal = requires_binary_error_signal(detector_name)
 
     autoencoder: AutoencoderDetector | None = None
@@ -236,4 +255,57 @@ def run_detection(
         tiempo_seg=tiempo_seg,
         ram_pico_kb=ram_pico_kb,
         retardo_promedio=retardo_promedio,
+    )
+
+
+@dataclasses.dataclass
+class ResultadoAgregado:
+    detector: str
+    accuracy_mean: float
+    accuracy_std: float
+    f1_mean: float
+    f1_std: float
+    drifts_idx: list[int]
+    tiempo_seg_mean: float
+    ram_pico_kb_mean: float
+    retardo_promedio_mean: float | None
+
+
+def ejecutar_con_repeticiones(
+    X: np.ndarray,
+    y: np.ndarray | None,
+    detector_name: str,
+    tiene_labels: bool,
+    ground_truth: list[int] | None,
+    n_repeats: int = 1,
+    warmup_rows: int = 200,
+    detector_params: dict | None = None,
+) -> ResultadoAgregado:
+    """Corre run_detection n_repeats veces con distinta semilla y agrega las
+    metricas (media y desviacion estandar), para que la comparacion entre
+    detectores no dependa de una sola inicializacion de la red."""
+    corridas = [
+        run_detection(
+            X,
+            y,
+            detector_name,
+            tiene_labels,
+            ground_truth,
+            warmup_rows,
+            seed=42 + i,
+            detector_params=detector_params,
+        )
+        for i in range(n_repeats)
+    ]
+    retardos = [c.retardo_promedio for c in corridas if c.retardo_promedio is not None]
+    return ResultadoAgregado(
+        detector=detector_name,
+        accuracy_mean=float(np.mean([c.accuracy for c in corridas])),
+        accuracy_std=float(np.std([c.accuracy for c in corridas])),
+        f1_mean=float(np.mean([c.f1 for c in corridas])),
+        f1_std=float(np.std([c.f1 for c in corridas])),
+        drifts_idx=corridas[0].drifts_idx,
+        tiempo_seg_mean=float(np.mean([c.tiempo_seg for c in corridas])),
+        ram_pico_kb_mean=float(np.mean([c.ram_pico_kb for c in corridas])),
+        retardo_promedio_mean=float(np.mean(retardos)) if retardos else None,
     )

@@ -7,6 +7,7 @@ from typing import Callable
 
 import numpy as np
 import torch
+from sklearn.metrics import f1_score
 from torch import nn
 from river.drift import KSWIN, PageHinkley
 from river.drift import ADWIN as RiverADWIN
@@ -33,6 +34,7 @@ def requires_binary_error_signal(name: str) -> bool:
 class ResultadoDeteccion:
     detector: str
     accuracy: float
+    f1: float
     drifts_idx: list[int]
     tiempo_seg: float
     ram_pico_kb: float
@@ -182,6 +184,8 @@ def run_detection(
     correct_count = 0
     total_labeled = 0
     drifts_idx: list[int] = []
+    y_true_all: list[int] = []
+    y_pred_all: list[int] = []
 
     tracemalloc.start()
     t0 = time.perf_counter()
@@ -195,6 +199,8 @@ def run_detection(
             correct = int(pred_label == true_label)
             correct_count += correct
             total_labeled += 1
+            y_true_all.append(true_label)
+            y_pred_all.append(pred_label)
             mlp.learn_one(x, true_label)
             signal = 1.0 - correct
         else:
@@ -219,11 +225,13 @@ def run_detection(
     ram_pico_kb = peak_bytes / 1024
 
     accuracy = correct_count / total_labeled if total_labeled else 0.0
+    f1 = f1_score(y_true_all, y_pred_all, zero_division=0) if total_labeled else 0.0
     retardo_promedio = calcular_retardo(drifts_idx, ground_truth)
 
     return ResultadoDeteccion(
         detector=detector_name,
         accuracy=accuracy,
+        f1=float(f1),
         drifts_idx=drifts_idx,
         tiempo_seg=tiempo_seg,
         ram_pico_kb=ram_pico_kb,

@@ -65,6 +65,7 @@ def _construir_tabla_resultados(dataset_name: str, resultados: list) -> pd.DataF
                 "Dataset": dataset_name,
                 "Detector": r.detector,
                 "Accuracy (%)": r.accuracy * 100,
+                "F1 (%)": r.f1 * 100,
                 "Drifts_Total": len(r.drifts_idx),
                 "Primeros_Drifts": r.drifts_idx[:3],
                 "Tiempo_seg": r.tiempo_seg,
@@ -73,6 +74,10 @@ def _construir_tabla_resultados(dataset_name: str, resultados: list) -> pd.DataF
             }
         )
     return pd.DataFrame(filas)
+
+
+def _tabla_a_csv(df: pd.DataFrame) -> bytes:
+    return df.to_csv(index=False).encode("utf-8")
 
 
 def _graficar_metricas_comparativas(df_resultados: pd.DataFrame) -> go.Figure:
@@ -186,6 +191,12 @@ def main():
     tabla = _construir_tabla_resultados(dataset_name, resultados)
     st.subheader("Tabla comparativa")
     st.dataframe(tabla, use_container_width=True)
+    st.download_button(
+        "Descargar tabla (CSV)",
+        data=_tabla_a_csv(tabla),
+        file_name=f"comparacion_{dataset_name}.csv",
+        mime="text/csv",
+    )
 
     st.subheader("Comparación de métricas")
     st.plotly_chart(_graficar_metricas_comparativas(tabla), use_container_width=True)

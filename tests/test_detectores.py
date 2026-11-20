@@ -121,6 +121,18 @@ def test_run_detection_without_labels_still_detects_drift():
     assert result.accuracy == 0.0
 
 
+def test_run_detection_with_labels_includes_f1_in_unit_interval():
+    X, y = make_labeled_stream()
+    result = run_detection(X, y, "ADWIN", tiene_labels=True, ground_truth=[300])
+    assert 0.0 <= result.f1 <= 1.0
+
+
+def test_run_detection_without_labels_f1_is_zero():
+    X, _ = make_labeled_stream()
+    result = run_detection(X, None, "DDM", tiene_labels=False, ground_truth=[300])
+    assert result.f1 == 0.0
+
+
 def test_es_anomalia_binaria_flags_error_far_above_frozen_baseline():
     assert es_anomalia_binaria(error=100.0, baseline_mean=1.0, baseline_std=0.1) is True
 

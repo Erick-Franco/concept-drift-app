@@ -1,6 +1,24 @@
+import dataclasses
+
 import pandas as pd
 
-from app import _graficar_metricas_comparativas, recomendar
+from app import (
+    _construir_tabla_resultados,
+    _graficar_metricas_comparativas,
+    _tabla_a_csv,
+    recomendar,
+)
+
+
+@dataclasses.dataclass
+class _ResultadoFalso:
+    detector: str
+    accuracy: float
+    f1: float
+    drifts_idx: list
+    tiempo_seg: float
+    ram_pico_kb: float
+    retardo_promedio: float | None
 
 
 def test_recomendar_menor_retardo_picks_min_delay():
@@ -46,3 +64,22 @@ def test_graficar_metricas_comparativas_includes_all_detectors():
     assert list(accuracy_trace.x) == ["ADWIN", "DDM", "EDDM"]
     assert list(accuracy_trace.y) == [90.0, 85.0, 95.0]
     assert list(tiempo_trace.y) == [1.0, 2.0, 0.5]
+
+
+def test_construir_tabla_resultados_includes_f1_column():
+    resultados = [
+        _ResultadoFalso(
+            detector="ADWIN", accuracy=0.9, f1=0.8, drifts_idx=[10], tiempo_seg=1.0,
+            ram_pico_kb=100.0, retardo_promedio=None,
+        )
+    ]
+    tabla = _construir_tabla_resultados("mi_dataset", resultados)
+    assert tabla.loc[0, "F1 (%)"] == 80.0
+
+
+def test_tabla_a_csv_round_trips_through_pandas():
+    df = pd.DataFrame({"Detector": ["ADWIN", "DDM"], "Accuracy (%)": [90.0, 85.0]})
+    csv_bytes = _tabla_a_csv(df)
+    assert isinstance(csv_bytes, bytes)
+    assert "Detector,Accuracy (%)" in csv_bytes.decode("utf-8")
+    assert "ADWIN,90.0" in csv_bytes.decode("utf-8")

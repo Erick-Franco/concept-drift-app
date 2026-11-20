@@ -1,13 +1,18 @@
 import dataclasses
 
+import numpy as np
 import pandas as pd
 
 from app import (
+    _calcular_rango_zoom,
     _construir_tabla_resultados,
+    _ejecutar_todos_los_detectores,
     _graficar_metricas_comparativas,
+    _resaltar_fila_ganadora,
     _tabla_a_csv,
     contar_votos,
     elegir_ganador,
+    obtener_metricas_ganador,
     recomendar,
 )
 
@@ -116,3 +121,62 @@ def test_tabla_a_csv_round_trips_through_pandas():
     assert isinstance(csv_bytes, bytes)
     assert "Detector,Accuracy (%)" in csv_bytes.decode("utf-8")
     assert "ADWIN,90.0" in csv_bytes.decode("utf-8")
+
+
+def test_obtener_metricas_ganador_extracts_key_numbers():
+    tabla = pd.DataFrame(
+        {
+            "Detector": ["ADWIN", "DDM"],
+            "Accuracy (%)": [94.2, 80.0],
+            "F1 (%)": [93.0, 75.0],
+            "Retardo_promedio": [12.0, None],
+            "Tiempo_seg": [1.5, 2.0],
+        }
+    )
+    metricas = obtener_metricas_ganador(tabla, "ADWIN")
+    assert metricas == {
+        "detector": "ADWIN",
+        "accuracy": 94.2,
+        "f1": 93.0,
+        "retardo": 12.0,
+        "tiempo": 1.5,
+    }
+
+
+def test_obtener_metricas_ganador_returns_none_without_winner():
+    tabla = pd.DataFrame({"Detector": ["ADWIN"], "Accuracy (%)": [94.2]})
+    assert obtener_metricas_ganador(tabla, None) is None
+
+
+def test_resaltar_fila_ganadora_returns_a_styler_without_changing_data():
+    tabla = pd.DataFrame({"Detector": ["ADWIN", "DDM"], "Accuracy (%)": [94.2, 80.0]})
+    estilo = _resaltar_fila_ganadora(tabla, "ADWIN")
+    assert isinstance(estilo, pd.io.formats.style.Styler)
+    pd.testing.assert_frame_equal(estilo.data, tabla)
+
+
+def test_ejecutar_todos_los_detectores_reports_progress_for_each_detector():
+    X = np.random.default_rng(0).normal(size=(50, 2)).astype(np.float32)
+    y = np.array([0, 1] * 25)
+    llamadas = []
+    _ejecutar_todos_los_detectores(
+        X, y, tiene_labels=True, ground_truth=None, n_repeticiones=1,
+        detector_params_por_nombre={}, progress_callback=lambda i, total, nombre: llamadas.append((i, total, nombre)),
+    )
+    assert len(llamadas) == 7
+    assert llamadas[0][0] == 1 and llamadas[-1][0] == 7
+    assert all(total == 7 for _, total, _ in llamadas)
+
+
+def test_calcular_rango_zoom_uses_ground_truth_when_available():
+    rango = _calcular_rango_zoom(drifts_idx=[], ground_truth=[5000], total_filas=14000, margen=500)
+    assert rango == (4500, 5500)
+
+
+def test_calcular_rango_zoom_falls_back_to_detected_drifts():
+    rango = _calcular_rango_zoom(drifts_idx=[100, 900], ground_truth=None, total_filas=14000, margen=200)
+    assert rango == (0, 1100)
+
+
+def test_calcular_rango_zoom_returns_none_without_any_reference_point():
+    assert _calcular_rango_zoom(drifts_idx=[], ground_truth=None, total_filas=14000) is None

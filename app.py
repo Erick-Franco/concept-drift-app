@@ -87,6 +87,49 @@ def recomendar(df_resultados: pd.DataFrame, prioridad: str, tiene_labels: bool =
     )
 
 
+def obtener_metricas_ganador(tabla: pd.DataFrame, ganador: str | None) -> dict | None:
+    """Extrae las metricas clave del detector ganador para mostrarlas como
+    tarjetas (st.metric), en vez de que solo aparezcan dentro de la tabla."""
+    if ganador is None:
+        return None
+    fila = tabla.loc[tabla["Detector"] == ganador].iloc[0]
+    return {
+        "detector": fila["Detector"],
+        "accuracy": fila["Accuracy (%)"],
+        "f1": fila["F1 (%)"],
+        "retardo": fila["Retardo_promedio"],
+        "tiempo": fila["Tiempo_seg"],
+    }
+
+
+def _resaltar_fila_ganadora(tabla: pd.DataFrame, ganador: str | None):
+    """Devuelve un Styler que pinta la fila del detector ganador, para que
+    resalte dentro de la tabla comparativa en vez de perderse entre las 7."""
+
+    def _resaltar(fila):
+        if ganador is not None and fila["Detector"] == ganador:
+            return ["background-color: #1b4332; color: white"] * len(fila)
+        return [""] * len(fila)
+
+    return tabla.style.apply(_resaltar, axis=1)
+
+
+def _calcular_rango_zoom(
+    drifts_idx: list[int], ground_truth: list[int] | None, total_filas: int, margen: int = 500
+) -> tuple[int, int] | None:
+    """Calcula el rango del eje X para que el grafico del stream haga zoom
+    automatico a la zona donde ocurre el drift, en vez de mostrar siempre
+    el stream completo. Usa el ground truth si existe; si no, los puntos
+    que detectaron los propios detectores. Sin ninguna referencia, no hay
+    zoom (se muestra todo)."""
+    puntos = list(ground_truth) if ground_truth else list(drifts_idx)
+    if not puntos:
+        return None
+    inicio = max(0, min(puntos) - margen)
+    fin = min(total_filas, max(puntos) + margen)
+    return inicio, fin
+
+
 def _construir_tabla_resultados(dataset_name: str, resultados: list) -> pd.DataFrame:
     filas = []
     for r in resultados:
@@ -134,23 +177,38 @@ def _graficar_stream(df: pd.DataFrame, label_col: str | None, resultados: list, 
     fig.add_trace(go.Scatter(y=señal.to_numpy(), mode="lines", name="Señal del stream", line=dict(color="lightgray")))
 
     colores = ["red", "blue", "green", "orange", "purple", "brown", "pink"]
+    todos_los_drifts: list[int] = []
     for i, r in enumerate(resultados):
         for idx in r.drifts_idx:
             fig.add_vline(x=idx, line_color=colores[i % len(colores)], line_dash="dot", opacity=0.4)
+        todos_los_drifts.extend(r.drifts_idx)
 
     if ground_truth:
         for punto in ground_truth:
             fig.add_vline(x=punto, line_color="black", line_width=2)
 
     fig.update_layout(title="Stream y puntos de drift detectados", xaxis_title="Muestra", yaxis_title="Valor")
+
+    rango_zoom = _calcular_rango_zoom(todos_los_drifts, ground_truth, len(df))
+    if rango_zoom is not None:
+        fig.update_xaxes(range=list(rango_zoom))
+        st.caption("🔍 Gráfico con zoom automático a la zona del drift. Usa el ícono de Plotly para ver el stream completo.")
+
     st.plotly_chart(fig, use_container_width=True)
 
 
 def _ejecutar_todos_los_detectores(
-    X, y_para_deteccion, tiene_labels, ground_truth, n_repeticiones, detector_params_por_nombre
+    X,
+    y_para_deteccion,
+    tiene_labels,
+    ground_truth,
+    n_repeticiones,
+    detector_params_por_nombre,
+    progress_callback=None,
 ) -> list:
     resultados = []
-    for nombre in DETECTOR_FACTORIES:
+    total = len(DETECTOR_FACTORIES)
+    for i, nombre in enumerate(DETECTOR_FACTORIES, start=1):
         resultado = ejecutar_con_repeticiones(
             X,
             y_para_deteccion,
@@ -161,6 +219,8 @@ def _ejecutar_todos_los_detectores(
             detector_params=detector_params_por_nombre.get(nombre),
         )
         resultados.append(resultado)
+        if progress_callback is not None:
+            progress_callback(i, total, nombre)
     return resultados
 
 
@@ -181,6 +241,15 @@ def main():
     with st.expander("Acerca de los detectores"):
         for nombre, descripcion in DETECTOR_DESCRIPTIONS.items():
             st.markdown(f"**{nombre}**: {descripcion}")
+
+    st.sidebar.markdown(
+        "<div style='text-align:center'>"
+        "<span style='font-size:2rem'>🎓</span><br>"
+        "<b>Universidad Peruana Unión</b><br>"
+        "<small>Curso de Inteligencia Artificial</small>"
+        "</div><hr>",
+        unsafe_allow_html=True,
+    )
 
     builtin = list_builtin_datasets()
     st.sidebar.header("Configuración")
@@ -305,33 +374,53 @@ def main():
     X, y, _ = encode_features(df, label_col)
     y_para_deteccion = y if tiene_labels else None
 
-    with st.spinner("Ejecutando detectores..."):
-        try:
-            resultados = _ejecutar_todos_los_detectores(
-                X, y_para_deteccion, tiene_labels, ground_truth, n_repeticiones, detector_params_por_nombre
-            )
-        except ValueError as e:
-            st.error(str(e))
-            return
+    barra_progreso = st.progress(0.0, text="Ejecutando detectores...")
+
+    def _actualizar_progreso(i: int, total: int, nombre: str) -> None:
+        barra_progreso.progress(i / total, text=f"Ejecutando {nombre}... ({i}/{total})")
+
+    try:
+        resultados = _ejecutar_todos_los_detectores(
+            X,
+            y_para_deteccion,
+            tiene_labels,
+            ground_truth,
+            n_repeticiones,
+            detector_params_por_nombre,
+            progress_callback=_actualizar_progreso,
+        )
+    except ValueError as e:
+        barra_progreso.empty()
+        st.error(str(e))
+        return
+    barra_progreso.empty()
 
     tabla = _construir_tabla_resultados(dataset_name, resultados)
-    st.subheader("Tabla comparativa")
-    st.dataframe(tabla, use_container_width=True)
-    st.download_button(
-        "Descargar tabla (CSV)",
-        data=_tabla_a_csv(tabla),
-        file_name=f"comparacion_{dataset_name}.csv",
-        mime="text/csv",
-    )
-
-    st.subheader("Comparación de métricas")
-    st.plotly_chart(_graficar_metricas_comparativas(tabla), use_container_width=True)
-
-    st.subheader("Visualización del stream")
-    _graficar_stream(df, label_col, resultados, ground_truth)
+    ganador = elegir_ganador(tabla, prioridad, tiene_labels)
+    metricas_ganador = obtener_metricas_ganador(tabla, ganador)
 
     st.subheader("Recomendación automática")
+    if metricas_ganador is not None:
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("🏆 Detector recomendado", metricas_ganador["detector"])
+        c2.metric("Accuracy", f"{metricas_ganador['accuracy']:.1f}%")
+        c3.metric("F1-score", f"{metricas_ganador['f1']:.1f}%")
+        retardo = metricas_ganador["retardo"]
+        c4.metric("Retardo", f"{retardo:.0f} muestras" if retardo is not None else "N/A")
     st.success(recomendar(tabla, prioridad, tiene_labels))
+
+    tab_tabla, tab_graficos = st.tabs(["📋 Resultados", "📊 Gráficos"])
+    with tab_tabla:
+        st.dataframe(_resaltar_fila_ganadora(tabla, ganador), use_container_width=True)
+        st.download_button(
+            "Descargar tabla (CSV)",
+            data=_tabla_a_csv(tabla),
+            file_name=f"comparacion_{dataset_name}.csv",
+            mime="text/csv",
+        )
+    with tab_graficos:
+        st.plotly_chart(_graficar_metricas_comparativas(tabla), use_container_width=True)
+        _graficar_stream(df, label_col, resultados, ground_truth)
 
 
 if __name__ == "__main__":
